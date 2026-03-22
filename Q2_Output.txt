@@ -1,0 +1,277 @@
+
+SYNTAX ANALYSIS: Syntactically correct.
+
+PARSE TREE:
++-- program
+    +-- stmt_list
+        |-- decl_stmt
+        |   |-- TYPE: [int]
+        |   |-- ID: [a]
+        |   +-- Delimiter: [;]
+        +-- stmt_list
+            |-- decl_stmt
+            |   |-- TYPE: [int]
+            |   |-- ID: [b]
+            |   +-- Delimiter: [;]
+            +-- stmt_list
+                |-- decl_stmt
+                |   |-- TYPE: [int]
+                |   |-- ID: [sum]
+                |   +-- Delimiter: [;]
+                +-- stmt_list
+                    |-- decl_stmt
+                    |   |-- TYPE: [float]
+                    |   |-- ID: [avg]
+                    |   +-- Delimiter: [;]
+                    +-- stmt_list
+                        |-- assign_stmt
+                        |   |-- ID: [a]
+                        |   |-- Assign: [=]
+                        |   |-- expr
+                        |   |   +-- term
+                        |   |       |-- term
+                        |   |       |   +-- factor
+                        |   |       |       +-- Int: [2]
+                        |   |       |-- Operator: [*]
+                        |   |       +-- factor
+                        |   |           |-- Delimiter: [(]
+                        |   |           |-- expr
+                        |   |           |   |-- expr
+                        |   |           |   |   +-- term
+                        |   |           |   |       +-- factor
+                        |   |           |   |           +-- Int: [3]
+                        |   |           |   |-- Operator: [+]
+                        |   |           |   +-- term
+                        |   |           |       +-- factor
+                        |   |           |           +-- Int: [4]
+                        |   |           +-- Delimiter: [)]
+                        |   +-- Delimiter: [;]
+                        +-- stmt_list
+                            |-- assign_stmt
+                            |   |-- ID: [b]
+                            |   |-- Assign: [=]
+                            |   |-- expr
+                            |   |   +-- term
+                            |   |       +-- factor
+                            |   |           +-- Int: [15]
+                            |   +-- Delimiter: [;]
+                            +-- stmt_list
+                                |-- assign_stmt
+                                |   |-- ID: [sum]
+                                |   |-- Assign: [=]
+                                |   |-- expr
+                                |   |   +-- term
+                                |   |       +-- factor
+                                |   |           +-- Int: [0]
+                                |   +-- Delimiter: [;]
+                                +-- stmt_list
+                                    |-- while_stmt
+                                    |   |-- WHILE: [while]
+                                    |   |-- bool_expr
+                                    |   |   |-- bool_expr
+                                    |   |   |   +-- bool_atom
+                                    |   |   |       |-- expr
+                                    |   |   |       |   +-- term
+                                    |   |   |       |       +-- factor
+                                    |   |   |       |           +-- ID: [a]
+                                    |   |   |       |-- REL: [<]
+                                    |   |   |       +-- expr
+                                    |   |   |           +-- term
+                                    |   |   |               +-- factor
+                                    |   |   |                   +-- ID: [b]
+                                    |   |   |-- LOGIC: [&&]
+                                    |   |   +-- bool_expr
+                                    |   |       +-- bool_atom
+                                    |   |           |-- expr
+                                    |   |           |   +-- term
+                                    |   |           |       +-- factor
+                                    |   |           |           +-- ID: [b]
+                                    |   |           |-- REL: [!=]
+                                    |   |           +-- expr
+                                    |   |               +-- term
+                                    |   |                   +-- factor
+                                    |   |                       +-- Int: [0]
+                                    |   +-- block
+                                    |       +-- stmt_list
+                                    |           |-- decl_stmt
+                                    |           |   |-- TYPE: [int]
+                                    |           |   |-- ID: [temp]
+                                    |           |   +-- Delimiter: [;]
+                                    |           +-- stmt_list
+                                    |               |-- assign_stmt
+                                    |               |   |-- ID: [temp]
+                                    |               |   |-- Assign: [=]
+                                    |               |   |-- expr
+                                    |               |   |   +-- term
+                                    |               |   |       |-- term
+                                    |               |   |       |   +-- factor
+                                    |               |   |       |       +-- ID: [a]
+                                    |               |   |       |-- Operator: [*]
+                                    |               |   |       +-- factor
+                                    |               |   |           +-- Int: [2]
+                                    |               |   +-- Delimiter: [;]
+                                    |               +-- stmt_list
+                                    |                   |-- if_stmt
+                                    |                   |   |-- IF: [if]
+                                    |                   |   |-- bool_expr
+                                    |                   |   |   |-- bool_expr
+                                    |                   |   |   |   +-- bool_atom
+                                    |                   |   |   |       |-- expr
+                                    |                   |   |   |       |   +-- term
+                                    |                   |   |   |       |       |-- term
+                                    |                   |   |   |       |       |   +-- factor
+                                    |                   |   |   |       |       |       +-- ID: [temp]
+                                    |                   |   |   |       |       |-- Operator: [%]
+                                    |                   |   |   |       |       +-- factor
+                                    |                   |   |   |       |           +-- Int: [3]
+                                    |                   |   |   |       |-- REL: [==]
+                                    |                   |   |   |       +-- expr
+                                    |                   |   |   |           +-- term
+                                    |                   |   |   |               +-- factor
+                                    |                   |   |   |                   +-- Int: [0]
+                                    |                   |   |   |-- LOGIC: [||]
+                                    |                   |   |   +-- bool_expr
+                                    |                   |   |       +-- bool_atom
+                                    |                   |   |           |-- expr
+                                    |                   |   |           |   +-- term
+                                    |                   |   |           |       +-- factor
+                                    |                   |   |           |           +-- ID: [a]
+                                    |                   |   |           |-- REL: [>]
+                                    |                   |   |           +-- expr
+                                    |                   |   |               +-- term
+                                    |                   |   |                   +-- factor
+                                    |                   |   |                       +-- Int: [5]
+                                    |                   |   |-- block
+                                    |                   |   |   +-- stmt_list
+                                    |                   |   |       +-- assign_stmt
+                                    |                   |   |           |-- ID: [sum]
+                                    |                   |   |           |-- Assign: [=]
+                                    |                   |   |           |-- expr
+                                    |                   |   |           |   |-- expr
+                                    |                   |   |           |   |   +-- term
+                                    |                   |   |           |   |       +-- factor
+                                    |                   |   |           |   |           +-- ID: [sum]
+                                    |                   |   |           |   |-- Operator: [+]
+                                    |                   |   |           |   +-- term
+                                    |                   |   |           |       +-- factor
+                                    |                   |   |           |           +-- ID: [temp]
+                                    |                   |   |           +-- Delimiter: [;]
+                                    |                   |   |-- ELSE: [else]
+                                    |                   |   +-- block
+                                    |                   |       +-- stmt_list
+                                    |                   |           +-- assign_stmt
+                                    |                   |               |-- ID: [sum]
+                                    |                   |               |-- Assign: [=]
+                                    |                   |               |-- expr
+                                    |                   |               |   |-- expr
+                                    |                   |               |   |   +-- term
+                                    |                   |               |   |       +-- factor
+                                    |                   |               |   |           +-- ID: [sum]
+                                    |                   |               |   |-- Operator: [-]
+                                    |                   |               |   +-- term
+                                    |                   |               |       +-- factor
+                                    |                   |               |           +-- Int: [1]
+                                    |                   |               +-- Delimiter: [;]
+                                    |                   +-- stmt_list
+                                    |                       +-- assign_stmt
+                                    |                           |-- ID: [a]
+                                    |                           |-- Assign: [=]
+                                    |                           |-- expr
+                                    |                           |   |-- expr
+                                    |                           |   |   +-- term
+                                    |                           |   |       +-- factor
+                                    |                           |   |           +-- ID: [a]
+                                    |                           |   |-- Operator: [+]
+                                    |                           |   +-- term
+                                    |                           |       +-- factor
+                                    |                           |           +-- Int: [1]
+                                    |                           +-- Delimiter: [;]
+                                    +-- stmt_list
+                                        |-- assign_stmt
+                                        |   |-- ID: [avg]
+                                        |   |-- Assign: [=]
+                                        |   |-- expr
+                                        |   |   +-- term
+                                        |   |       |-- term
+                                        |   |       |   +-- factor
+                                        |   |       |       +-- ID: [sum]
+                                        |   |       |-- Operator: [/]
+                                        |   |       +-- factor
+                                        |   |           |-- Delimiter: [(]
+                                        |   |           |-- expr
+                                        |   |           |   |-- expr
+                                        |   |           |   |   +-- term
+                                        |   |           |   |       +-- factor
+                                        |   |           |   |           +-- ID: [b]
+                                        |   |           |   |-- Operator: [-]
+                                        |   |           |   +-- term
+                                        |   |           |       +-- factor
+                                        |   |           |           +-- ID: [a]
+                                        |   |           +-- Delimiter: [)]
+                                        |   +-- Delimiter: [;]
+                                        +-- stmt_list
+                                            +-- if_stmt
+                                                |-- IF: [if]
+                                                |-- bool_expr
+                                                |   +-- bool_atom
+                                                |       |-- NOT: [!]
+                                                |       +-- bool_expr
+                                                |           +-- bool_atom
+                                                |               |-- expr
+                                                |               |   +-- term
+                                                |               |       +-- factor
+                                                |               |           +-- ID: [avg]
+                                                |               |-- REL: [<]
+                                                |               +-- expr
+                                                |                   +-- term
+                                                |                       +-- factor
+                                                |                           +-- Float: [5.0]
+                                                |-- block
+                                                |   +-- stmt_list
+                                                |       +-- print_stmt
+                                                |           |-- PRINT: [print]
+                                                |           |-- expr
+                                                |           |   +-- term
+                                                |           |       +-- factor
+                                                |           |           +-- ID: [sum]
+                                                |           +-- Delimiter: [;]
+                                                |-- ELSE: [else]
+                                                +-- block
+                                                    +-- stmt_list
+                                                        +-- print_stmt
+                                                            |-- PRINT: [print]
+                                                            |-- expr
+                                                            |   +-- term
+                                                            |       +-- factor
+                                                            |           +-- ID: [avg]
+                                                            +-- Delimiter: [;]
+
+=== LEFTMOST DERIVATION (First Assignment) ===
+Step 1: assign_stmt 
+Step 2: a = expr ; 
+Step 3: a = term ; 
+Step 4: a = term * factor ; 
+Step 5: a = factor * factor ; 
+Step 6: a = 2 * factor ; 
+Step 7: a = 2 * ( expr ) ; 
+Step 8: a = 2 * ( expr + term ) ; 
+Step 9: a = 2 * ( term + term ) ; 
+Step 10: a = 2 * ( factor + term ) ; 
+Step 11: a = 2 * ( 3 + term ) ; 
+Step 12: a = 2 * ( 3 + factor ) ; 
+Step 13: a = 2 * ( 3 + 4 ) ; 
+
+=== RIGHTMOST DERIVATION (First Assignment) ===
+Step 1: assign_stmt 
+Step 2: a = expr ; 
+Step 3: a = term ; 
+Step 4: a = term * factor ; 
+Step 5: a = term * ( expr ) ; 
+Step 6: a = term * ( expr + term ) ; 
+Step 7: a = term * ( expr + factor ) ; 
+Step 8: a = term * ( expr + 4 ) ; 
+Step 9: a = term * ( term + 4 ) ; 
+Step 10: a = term * ( factor + 4 ) ; 
+Step 11: a = term * ( 3 + 4 ) ; 
+Step 12: a = factor * ( 3 + 4 ) ; 
+Step 13: a = 2 * ( 3 + 4 ) ; 
