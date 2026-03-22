@@ -1,7 +1,7 @@
 # Compiler_Construction_Assignment
 This repository contains the multi-phase implementation of a compiler developed for the CS F363: Compiler construction course. The project demonstrates the transition from raw source code to a structured, validated syntactic representation.
 
-___Note: This repository is being constantly updated as I progress through the subsequent stages of compiler construction.___  
+_Note: This repository is being constantly updated as I progress through the subsequent stages of compiler construction._ 
 
 
 ## 🏁 GETTING STARTED
@@ -125,15 +125,21 @@ gcc lex.yy.c -ll -o lexer
 #compiler using Bison for verbose error support
 bison -d Q3.y
 gcc Q3.tab.c -o parser_v2
-#Run the pipeline
-./lexer < code.txt | ./parser_v2
+
+./lexer < code.txt | ./parser_v2   #Run the pipeline
 ```
 
-### Question 4: Symbol Table and Scope Handling (5 Marks)
-Design and implement a symbol table capable of:  
-• Storing variable name, type, scope, and memory offset  
-• Supporting insertion and lookup  
-• Handling nested block scopes  
-Demonstrate symbol table updates while processing the evaluation program.
+### Question 4: Parser Implementation (10 Marks)
+Upgrade your syntax analyzer by implementing two of the following:  
+• LL(1) parser  
+• Shift-Reduce parser  
+• SLR/LR(0) parser  
+
+You must provide:  
+• FIRST and FOLLOW sets  
+• Parsing table construction  
+• Parsing stack trace for a non-trivial input  
+The parser must correctly process the evaluation program.
 
 ### How to run
+_in process..._
