@@ -3,15 +3,17 @@ This repository contains the multi-phase implementation of a compiler developed 
 
 ___Note: This repository is being constantly updated as I progress through the subsequent stages of compiler construction.___  
 
+
 ## 🏁 GETTING STARTED
 To access the project files and the run the compiler phases on your local machine, clone this repository using the following command:  
 ```bash
 git clone https://github.com/v-square007/Compiler_Construction_Lab_Assignment.git
 ```
+
  
 ## 📄 ASSIGNMENT SPECIFICATION
 For a detailed understanding of the grammar rules, language constraints, and evaluation criteria, please refer to the official document:  
-[Download assignment PDF](https://drive.google.com/file/d/1YX-Wi6O1gnKjh8ly4OzJQQkO5gKgURHs/view?usp=drive_link)
+[Download assignment PDF](https://drive.google.com/file/d/1Qt1TorGm6ChUJDx0ErvBEX6OI8GSv61V/view?usp=sharing)
 
 
 ## ⛭ THE PHASES OF A COMPILER
