@@ -1,0 +1,1291 @@
+/* =================== COMMON HEADERS =================== */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "lab.tab.h"      /* from bison: tokens + yyparse() */
+
+/* ---- externs from flex/bison ---- */
+extern int   yylex();
+extern int   yyparse();
+extern int   line_number;
+extern char* yytext;
+extern int   yydebug;
+
+/* =================== CONSTANTS =================== */
+#define MAX_TOKENS 2000
+#define MAX_ERRORS 100
+#define MAX_SYMBOLS 500
+#define MAX_SEM_ERRORS 100
+#define MAX_SCOPE_DEPTH 100
+
+/* =================== AST NODE =================== */
+typedef struct Node {
+    char label[50];
+    char value[50];
+    int line;                      /* needed for semantic error reporting */
+    struct Node* children[10];
+    int child_count;
+} Node;
+
+/* =================== SYNTAX ERROR =================== */
+typedef struct {
+    int  line;
+    char type[64];
+    char message[256];
+    char token[64];
+} SyntaxError;
+
+/* =================== SYMBOL TABLE =================== */
+typedef struct {
+    char name[64];
+    char type[32];
+    int scope;
+    int offset;
+    int line;
+} Symbol;
+
+/* =================== SEMANTIC ERROR =================== */
+typedef struct {
+    int line;
+    char message[256];
+} SemanticError;
+
+/* =================== GLOBALS =================== */
+SyntaxError error_list[MAX_ERRORS];
+int error_count = 0;
+
+Node* final_root = NULL;
+
+Symbol symbol_table[MAX_SYMBOLS];
+int symbol_count = 0;
+
+SemanticError sem_errors[MAX_SEM_ERRORS];
+int sem_error_count = 0;
+
+int current_scope = 0;
+int next_scope_id = 0;
+int scope_stack[MAX_SCOPE_DEPTH];
+int scope_top = -1;
+int scope_offsets[MAX_SCOPE_DEPTH] = {0};
+
+/* ================== NODE UTILITIES ==================== */
+
+Node* createNode(const char* label, const char* value) {
+    Node* n = (Node*)malloc(sizeof(Node));
+    if (!n) return NULL;
+
+    strncpy(n->label, label ? label : "", 49);
+    n->label[49] = '\0';
+
+    if (value) {
+        strncpy(n->value, value, 49);
+        n->value[49] = '\0';
+    } else {
+        n->value[0] = '\0';
+    }
+
+    n->line = line_number;
+    n->child_count = 0;
+
+    for (int i = 0; i < 10; i++) {
+        n->children[i] = NULL;
+    }
+
+    return n;
+}
+
+void addChild(Node* parent, Node* child) {
+    if (parent && child && parent->child_count < 10) {
+        parent->children[parent->child_count++] = child;
+    }
+}
+
+void print_tree_visual(Node* node, char* prefix, int is_last) {
+    if (!node) return;
+
+    printf("%s", prefix);
+    printf(is_last ? "+-- " : "|-- ");
+
+    if (node->value[0] != '\0')
+        printf("%s: [%s] (line %d)\n", node->label, node->value, node->line);
+    else
+        printf("%s (line %d)\n", node->label, node->line);
+
+    char new_prefix[MAX_TOKENS];
+    sprintf(new_prefix, "%s%s", prefix, is_last ? "    " : "|   ");
+
+    for (int i = 0; i < node->child_count; i++) {
+        print_tree_visual(node->children[i], new_prefix,
+                          i == node->child_count - 1);
+    }
+}
+
+void leftmost_derivation(Node* root) {
+    if (!root) return;
+
+    Node* sentential[MAX_TOKENS];
+    int count = 1, step = 1;
+    sentential[0] = root;
+
+    while (1) {
+        printf("Step %d: ", step++);
+        for (int i = 0; i < count; i++) {
+            printf("%s ",
+                   sentential[i]->value[0] ?
+                   sentential[i]->value : sentential[i]->label);
+        }
+        printf("\n");
+
+        int pos = -1;
+        for (int i = 0; i < count; i++) {
+            if (sentential[i]->child_count > 0) {
+                pos = i;
+                break;
+            }
+        }
+        if (pos == -1) break;
+
+        Node* temp[MAX_TOKENS];
+        int idx = 0;
+
+        for (int i = 0; i < pos; i++) temp[idx++] = sentential[i];
+        for (int i = 0; i < sentential[pos]->child_count; i++)
+            temp[idx++] = sentential[pos]->children[i];
+        for (int i = pos + 1; i < count; i++) temp[idx++] = sentential[i];
+
+        count = idx;
+        for (int i = 0; i < count; i++) sentential[i] = temp[i];
+    }
+}
+
+void rightmost_derivation(Node* root) {
+    if (!root) return;
+
+    Node* sentential[MAX_TOKENS];
+    int count = 1, step = 1;
+    sentential[0] = root;
+
+    while (1) {
+        printf("Step %d: ", step++);
+        for (int i = 0; i < count; i++) {
+            printf("%s ",
+                   sentential[i]->value[0] ?
+                   sentential[i]->value : sentential[i]->label);
+        }
+        printf("\n");
+
+        int pos = -1;
+        for (int i = count - 1; i >= 0; i--) {
+            if (sentential[i]->child_count > 0) {
+                pos = i;
+                break;
+            }
+        }
+        if (pos == -1) break;
+
+        Node* temp[MAX_TOKENS];
+        int idx = 0;
+
+        for (int i = 0; i < pos; i++) temp[idx++] = sentential[i];
+        for (int i = 0; i < sentential[pos]->child_count; i++)
+            temp[idx++] = sentential[pos]->children[i];
+        for (int i = pos + 1; i < count; i++) temp[idx++] = sentential[i];
+
+        count = idx;
+        for (int i = 0; i < count; i++) sentential[i] = temp[i];
+    }
+}
+
+Node* find_assignment(Node* node) {
+    if (!node) return NULL;
+    if (strcmp(node->label, "assign_stmt") == 0) return node;
+
+    for (int i = 0; i < node->child_count; i++) {
+        Node* r = find_assignment(node->children[i]);
+        if (r) return r;
+    }
+    return NULL;
+}
+
+/* ================== ERROR HANDLING ==================== */
+
+static void record_error(const char* msg, const char* tok, int line) {
+    if (error_count >= MAX_ERRORS) return;
+
+    if (error_count > 0) {
+        SyntaxError* prev = &error_list[error_count - 1];
+        if (prev->line == line &&
+            strcmp(prev->token, tok ? tok : "") == 0) {
+            return;
+        }
+    }
+
+    SyntaxError* e = &error_list[error_count++];
+    e->line = line;
+
+    strncpy(e->token, tok ? tok : "", 63);
+    e->token[63] = '\0';
+
+    strncpy(e->message, msg ? msg : "", 255);
+    e->message[255] = '\0';
+
+    if (strstr(msg, "expecting") && strstr(msg, "';'"))
+        strncpy(e->type, "Missing Semicolon", 63);
+    else if (strstr(msg, "expecting") && strstr(msg, "')'"))
+        strncpy(e->type, "Missing Closing Parenthesis", 63);
+    else if (strstr(msg, "expecting") && strstr(msg, "'('"))
+        strncpy(e->type, "Missing Opening Parenthesis", 63);
+    else if (strstr(msg, "expecting") && strstr(msg, "'}'"))
+        strncpy(e->type, "Missing Closing Brace", 63);
+    else if (strstr(msg, "expecting") && strstr(msg, "'{'"))
+        strncpy(e->type, "Missing Opening Brace", 63);
+    else if (strstr(msg, "expecting") && strstr(msg, "'='"))
+        strncpy(e->type, "Missing Assignment Operator", 63);
+    else if (strstr(msg, "unexpected '}'"))
+        strncpy(e->type, "Unexpected Closing Brace", 63);
+    else if (strstr(msg, "unexpected '{'"))
+        strncpy(e->type, "Unexpected Opening Brace", 63);
+    else if (strstr(msg, "unexpected ')'"))
+        strncpy(e->type, "Unexpected Closing Parenthesis", 63);
+    else if (strstr(msg, "unexpected ELSE"))
+        strncpy(e->type, "Unexpected else (no matching if)", 63);
+    else if (strstr(msg, "end of file"))
+        strncpy(e->type, "Unexpected End of File", 63);
+    else if (strstr(msg, "unexpected"))
+        strncpy(e->type, "Unexpected Token", 63);
+    else
+        strncpy(e->type, "Syntax Error", 63);
+
+    e->type[63] = '\0';
+}
+
+void yyerror(const char* s) {
+    record_error(s, yytext, line_number);
+}
+
+static void print_error_summary(void) {
+    printf("\n========================================\n");
+    printf("  ERROR SUMMARY  (%d error%s found)\n",
+           error_count, error_count == 1 ? "" : "s");
+    printf("========================================\n");
+    printf("%-4s  %-40s  %-6s  %s\n",
+           "No.", "Error Type", "Line", "Details");
+    printf("%-4s  %-40s  %-6s  %s\n",
+           "---", "----------", "----", "-------");
+
+    for (int i = 0; i < error_count; i++) {
+        printf("%-4d  %-40s  %-6d  %s (near '%s')\n",
+               i + 1,
+               error_list[i].type,
+               error_list[i].line,
+               error_list[i].message,
+               error_list[i].token);
+    }
+    printf("========================================\n");
+}
+
+/* ================= SYMBOL TABLE ================= */
+
+void reset_semantic_state(void) {
+    symbol_count = 0;
+    sem_error_count = 0;
+    current_scope = 0;
+    next_scope_id = 0;
+    scope_top = -1;
+
+    for (int i = 0; i < MAX_SCOPE_DEPTH; i++)
+        scope_offsets[i] = 0;
+}
+
+void add_semantic_error(int line, const char* msg) {
+    if (sem_error_count >= MAX_SEM_ERRORS) return;
+
+    if (sem_error_count > 0) {
+        SemanticError* prev = &sem_errors[sem_error_count - 1];
+        if (prev->line == line && strcmp(prev->message, msg) == 0) {
+            return;
+        }
+    }
+
+    sem_errors[sem_error_count].line = line;
+    strncpy(sem_errors[sem_error_count].message, msg, 255);
+    sem_errors[sem_error_count].message[255] = '\0';
+    sem_error_count++;
+}
+
+void enter_scope(void) {
+    if (scope_top < MAX_SCOPE_DEPTH - 1) {
+        scope_stack[++scope_top] = current_scope;
+        current_scope = ++next_scope_id;
+        scope_offsets[current_scope] = 0;
+        printf("\n>> Enter Scope %d\n", current_scope);
+    }
+}
+
+void exit_scope(void) {
+    printf("<< Exit Scope %d\n", current_scope);
+    if (scope_top >= 0) {
+        current_scope = scope_stack[scope_top--];
+    }
+}
+
+int get_type_size(const char* type) {
+    if (strcmp(type, "int") == 0) return 4;
+    if (strcmp(type, "float") == 0) return 8;
+    if (strcmp(type, "bool") == 0) return 1;
+    return 4;
+}
+
+Symbol* lookup_current_scope(const char* name) {
+    printf("\n[LOOKUP CURRENT SCOPE %d] '%s'\n", current_scope, name);
+
+    for (int i = symbol_count - 1; i >= 0; i--) {
+        if (strcmp(symbol_table[i].name, name) == 0 &&
+            symbol_table[i].scope == current_scope) {
+
+            printf("  ✔ Found in current scope\n");
+            return &symbol_table[i];
+        }
+    }
+
+    printf("  ✘ Not found in current scope\n");
+    return NULL;
+}
+
+Symbol* lookup_symbol(const char* name) {
+    printf("\n[LOOKUP] Searching for '%s'\n", name);
+
+    int active_scopes[MAX_SCOPE_DEPTH];
+    int count = 0;
+
+    /* Collect scopes: current → outer */
+    active_scopes[count++] = current_scope;
+    for (int i = scope_top; i >= 0; i--) {
+        active_scopes[count++] = scope_stack[i];
+    }
+
+    for (int s = 0; s < count; s++) {
+        int sc = active_scopes[s];
+        printf("  Checking Scope %d...\n", sc);
+
+        for (int i = symbol_count - 1; i >= 0; i--) {
+            if (strcmp(symbol_table[i].name, name) == 0 &&
+                symbol_table[i].scope == sc) {
+
+                printf("  ✔ Found '%s' in Scope %d (Type=%s, Offset=%d)\n",
+                       name,
+                       sc,
+                       symbol_table[i].type,
+                       symbol_table[i].offset);
+
+                return &symbol_table[i];
+            }
+        }
+    }
+
+    printf("  ✘ '%s' NOT FOUND in any active scope\n", name);
+    return NULL;
+}
+
+void insert_symbol(const char* name, const char* type, int line) {
+    if (symbol_count >= MAX_SYMBOLS) return;
+
+    if (lookup_current_scope(name) != NULL) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "Multiple declaration of variable '%s' in same scope", name);
+        add_semantic_error(line, msg);
+        return;
+    }
+
+    Symbol* s = &symbol_table[symbol_count++];
+    strncpy(s->name, name, 63);
+    s->name[63] = '\0';
+
+    strncpy(s->type, type, 31);
+    s->type[31] = '\0';
+
+    s->scope = current_scope;
+    s->offset = scope_offsets[current_scope];
+    s->line = line;
+
+    scope_offsets[current_scope] += get_type_size(type);
+
+    printf("Inserted -> Name: %-10s Type: %-8s Scope: %-3d Offset: %-3d\n",
+           s->name, s->type, s->scope, s->offset);
+}
+
+void print_symbol_table(void) {
+    printf("\n================ SYMBOL TABLE ================\n");
+    printf("%-5s %-15s %-10s %-10s %-10s %-10s\n",
+           "No", "Name", "Type", "Scope", "Offset", "Line");
+    printf("---------------------------------------------------------------\n");
+
+    for (int i = 0; i < symbol_count; i++) {
+        printf("%-5d %-15s %-10s %-10d %-10d %-10d\n",
+               i + 1,
+               symbol_table[i].name,
+               symbol_table[i].type,
+               symbol_table[i].scope,
+               symbol_table[i].offset,
+               symbol_table[i].line);
+    }
+
+    printf("==============================================================\n");
+}
+
+void print_semantic_errors(void) {
+    printf("\n================ SEMANTIC ERRORS ================\n");
+    if (sem_error_count == 0) {
+        printf("No semantic errors found.\n");
+    } else {
+        for (int i = 0; i < sem_error_count; i++) {
+            printf("%d. Line %d: %s\n",
+                   i + 1,
+                   sem_errors[i].line,
+                   sem_errors[i].message);
+        }
+    }
+    printf("=================================================\n");
+}
+
+/* ================= TYPE INFERENCE ================= */
+
+Node* get_first_child_with_label(Node* node, const char* label) {
+    if (!node) return NULL;
+    for (int i = 0; i < node->child_count; i++) {
+        if (strcmp(node->children[i]->label, label) == 0)
+            return node->children[i];
+    }
+    return NULL;
+}
+
+Node* find_condition_node(Node* node) {
+    if (!node) return NULL;
+
+    for (int i = 0; i < node->child_count; i++) {
+        if (strcmp(node->children[i]->label, "bool_expr") == 0 ||
+            strcmp(node->children[i]->label, "expr") == 0 ||
+            strcmp(node->children[i]->label, "error_cond") == 0) {
+            return node->children[i];
+        }
+    }
+
+    return NULL;
+}
+
+const char* infer_expr_type(Node* node);
+const char* infer_term_type(Node* node);
+const char* infer_factor_type(Node* node);
+const char* infer_bool_expr_type(Node* node);
+const char* infer_bool_term_type(Node* node);
+const char* infer_bool_atom_type(Node* node);
+
+const char* infer_factor_type(Node* node) {
+    if (!node) return "unknown";
+
+    if (strcmp(node->label, "ID") == 0) {
+        Symbol* s = lookup_symbol(node->value);
+        if (!s) {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "Use of undeclared variable '%s'", node->value);
+            add_semantic_error(node->line, msg);
+            return "unknown";
+        }
+        return s->type;
+    }
+
+    if (strcmp(node->label, "INT_CONST") == 0 || strcmp(node->label, "Int") == 0)
+        return "int";
+    if (strcmp(node->label, "FLOAT_CONST") == 0 || strcmp(node->label, "Float") == 0)
+        return "float";
+    if (strcmp(node->label, "BOOL_CONST") == 0)
+        return "bool";
+
+    for (int i = 0; i < node->child_count; i++) {
+        const char* t = infer_factor_type(node->children[i]);
+        if (strcmp(t, "unknown") != 0) return t;
+    }
+
+    return "unknown";
+}
+
+const char* infer_term_type(Node* node) {
+    if (!node) return "unknown";
+
+    if (node->child_count == 1)
+        return infer_factor_type(node->children[0]);
+
+    if (node->child_count == 3) {
+        const char* left = infer_term_type(node->children[0]);
+        const char* right = infer_factor_type(node->children[2]);
+
+        if ((!strcmp(left, "int") || !strcmp(left, "float")) &&
+            (!strcmp(right, "int") || !strcmp(right, "float"))) {
+            if (!strcmp(left, "float") || !strcmp(right, "float"))
+                return "float";
+            return "int";
+        }
+
+        add_semantic_error(node->line, "Type mismatch in term expression");
+        return "unknown";
+    }
+
+    return "unknown";
+}
+
+const char* infer_expr_type(Node* node) {
+    if (!node) return "unknown";
+
+    if (node->child_count == 1)
+        return infer_term_type(node->children[0]);
+
+    if (node->child_count == 3) {
+        const char* left = infer_expr_type(node->children[0]);
+        const char* right = infer_term_type(node->children[2]);
+
+        if ((!strcmp(left, "int") || !strcmp(left, "float")) &&
+            (!strcmp(right, "int") || !strcmp(right, "float"))) {
+            if (!strcmp(left, "float") || !strcmp(right, "float"))
+                return "float";
+            return "int";
+        }
+
+        add_semantic_error(node->line, "Type mismatch in arithmetic expression");
+        return "unknown";
+    }
+
+    return infer_factor_type(node);
+}
+
+const char* infer_bool_atom_type(Node* node) {
+    if (!node) return "unknown";
+
+    if (node->child_count == 3) {
+        if (strcmp(node->children[1]->label, "REL") == 0) {
+            const char* left = infer_expr_type(node->children[0]);
+            const char* right = infer_expr_type(node->children[2]);
+
+            if ((!strcmp(left, "int") || !strcmp(left, "float")) &&
+                (!strcmp(right, "int") || !strcmp(right, "float"))) {
+                return "bool";
+            }
+
+            add_semantic_error(node->line,
+                               "Type mismatch in relational expression");
+            return "unknown";
+        }
+
+        return infer_bool_expr_type(node->children[1]);
+    }
+
+    if (node->child_count == 1) {
+        if (strcmp(node->children[0]->label, "BOOL_CONST") == 0)
+            return "bool";
+    }
+
+    for (int i = 0; i < node->child_count; i++) {
+        if (strcmp(node->children[i]->label, "bool_expr") == 0)
+            return infer_bool_expr_type(node->children[i]);
+    }
+
+    return "unknown";
+}
+
+const char* infer_bool_term_type(Node* node) {
+    if (!node) return "unknown";
+
+    if (node->child_count == 1) {
+        if (strcmp(node->children[0]->label, "bool_atom") == 0)
+            return infer_bool_atom_type(node->children[0]);
+    }
+
+    if (node->child_count == 2) {
+        const char* t = infer_bool_term_type(node->children[1]);
+        if (strcmp(t, "bool") != 0) {
+            add_semantic_error(node->line, "Invalid boolean condition");
+            return "unknown";
+        }
+        return "bool";
+    }
+
+    return "unknown";
+}
+
+const char* infer_bool_expr_type(Node* node) {
+    if (!node) return "unknown";
+
+    if (node->child_count == 1)
+        return infer_bool_term_type(node->children[0]);
+
+    if (node->child_count == 3) {
+        const char* left = infer_bool_expr_type(node->children[0]);
+        const char* right = infer_bool_term_type(node->children[2]);
+
+        if (strcmp(left, "bool") == 0 && strcmp(right, "bool") == 0)
+            return "bool";
+
+        add_semantic_error(node->line, "Invalid boolean condition");
+        return "unknown";
+    }
+
+    return "unknown";
+}
+
+/* ================= SEMANTIC TRAVERSAL ================= */
+
+void semantic_traverse(Node* node) {
+    if (!node) return;
+
+    if (strcmp(node->label, "block") == 0) {
+        enter_scope();
+        for (int i = 0; i < node->child_count; i++)
+            semantic_traverse(node->children[i]);
+        exit_scope();
+        return;
+    }
+
+    if (strcmp(node->label, "decl_stmt") == 0) {
+        Node* typeNode = get_first_child_with_label(node, "TYPE");
+        Node* idNode = get_first_child_with_label(node, "ID");
+
+        if (typeNode && idNode) {
+            insert_symbol(idNode->value, typeNode->value, idNode->line);
+        }
+
+        Node* exprNode = NULL;
+        for (int i = 0; i < node->child_count; i++) {
+            if (strcmp(node->children[i]->label, "expr") == 0) {
+                exprNode = node->children[i];
+                break;
+            }
+        }
+
+        if (typeNode && exprNode) {
+            const char* rhs_type = infer_expr_type(exprNode);
+
+            if (strcmp(rhs_type, "unknown") != 0 &&
+                strcmp(typeNode->value, rhs_type) != 0) {
+                if (!(strcmp(typeNode->value, "float") == 0 &&
+                      strcmp(rhs_type, "int") == 0)) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg),
+                             "Type mismatch in declaration of '%s' (lhs=%s, rhs=%s)",
+                             idNode ? idNode->value : "?",
+                             typeNode->value, rhs_type);
+                    add_semantic_error(node->line, msg);
+                }
+            }
+        }
+    }
+    else if (strcmp(node->label, "assign_stmt") == 0) {
+        Node* idNode = get_first_child_with_label(node, "ID");
+        Node* exprNode = NULL;
+
+        for (int i = 0; i < node->child_count; i++) {
+            if (strcmp(node->children[i]->label, "expr") == 0) {
+                exprNode = node->children[i];
+                break;
+            }
+        }
+
+        if (idNode) {
+            Symbol* s = lookup_symbol(idNode->value);
+            if (!s) {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "Use of undeclared variable '%s'", idNode->value);
+                add_semantic_error(idNode->line, msg);
+            } else if (exprNode) {
+                const char* rhs_type = infer_expr_type(exprNode);
+
+                if (strcmp(rhs_type, "unknown") != 0 &&
+                    strcmp(s->type, rhs_type) != 0) {
+                    if (!(strcmp(s->type, "float") == 0 &&
+                          strcmp(rhs_type, "int") == 0)) {
+                        char msg[256];
+                        snprintf(msg, sizeof(msg),
+                                 "Type mismatch in assignment to '%s' (lhs=%s, rhs=%s)",
+                                 idNode->value, s->type, rhs_type);
+                        add_semantic_error(node->line, msg);
+                    }
+                }
+            }
+        }
+    }
+    else if (strcmp(node->label, "if_stmt") == 0) {
+    Node* condNode = find_condition_node(node);
+
+    if (condNode) {
+        if (strcmp(condNode->label, "error_cond") == 0) {
+            add_semantic_error(condNode->line,
+                "Invalid boolean condition in if statement");
+        } else {
+            const char* cond_type;
+
+            if (strcmp(condNode->label, "bool_expr") == 0) {
+                cond_type = infer_bool_expr_type(condNode);
+            } else {
+                cond_type = "not_bool";
+            }
+
+            if (strcmp(cond_type, "bool") != 0) {
+                add_semantic_error(condNode->line,
+                    "Invalid boolean condition in if statement");
+            }
+        }
+    }
+}
+    else if (strcmp(node->label, "while_stmt") == 0) {
+    Node* condNode = find_condition_node(node);
+
+    if (condNode) {
+        if (strcmp(condNode->label, "error_cond") == 0) {
+            add_semantic_error(condNode->line,
+                "Invalid boolean condition in while statement");
+        } else {
+            const char* cond_type;
+
+            if (strcmp(condNode->label, "bool_expr") == 0) {
+                cond_type = infer_bool_expr_type(condNode);
+            } else {
+                cond_type = "not_bool";
+            }
+
+            if (strcmp(cond_type, "bool") != 0) {
+                add_semantic_error(condNode->line,
+                    "Invalid boolean condition in while statement");
+            }
+        }
+    }
+}
+
+    for (int i = 0; i < node->child_count; i++)
+        semantic_traverse(node->children[i]);
+}
+
+/* =================== LL(1) PARSER PART =================== */
+
+/* LL(1) grammar (expressions only)
+   E  -> T E'
+   E' -> OP_ADD T E' | epsilon
+   T  -> F T'
+   T' -> OP_MUL F T' | epsilon
+   F  -> ID | INT_CONST | FLOAT_CONST | '(' E ')'
+*/
+
+typedef enum {
+    LL_ID = 1,
+    LL_INT_CONST,
+    LL_FLOAT_CONST,
+    LL_OP_ADD,
+    LL_OP_MUL,
+    LL_LPAREN,
+    LL_RPAREN,
+    LL_SEMI,
+    LL_END
+} LLTokenType;
+
+typedef struct {
+    LLTokenType type;
+    char        lexeme[64];
+} LLToken;
+
+static LLToken ll_look;
+
+static LLToken ll_next_token(void);
+static void ll_advance(void);
+static void ll_error(const char* where, const char* expected);
+static void parse_E(void);
+static void parse_Ep(void);
+static void parse_T(void);
+static void parse_Tp(void);
+static void parse_F(void);
+
+static void print_first_follow(void) {
+    printf("\n==== FIRST / FOLLOW for LL(1) Expression Grammar ====\n");
+    printf("FIRST(E)  = { ID, INT_CONST, FLOAT_CONST, '(' }\n");
+    printf("FIRST(E') = { OP_ADD, epsilon }\n");
+    printf("FIRST(T)  = { ID, INT_CONST, FLOAT_CONST, '(' }\n");
+    printf("FIRST(T') = { OP_MUL, epsilon }\n");
+    printf("FIRST(F)  = { ID, INT_CONST, FLOAT_CONST, '(' }\n\n");
+
+    printf("FOLLOW(E)  = { ')', ';', EOF }\n");
+    printf("FOLLOW(E') = { ')', ';', EOF }\n");
+    printf("FOLLOW(T)  = { OP_ADD, ')', ';', EOF }\n");
+    printf("FOLLOW(T') = { OP_ADD, ')', ';', EOF }\n");
+    printf("FOLLOW(F)  = { OP_MUL, OP_ADD, ')', ';', EOF }\n\n");
+}
+
+static LLToken ll_next_token(void) {
+    LLToken t;
+    int tk = yylex();
+    t.lexeme[0] = '\0';
+
+    switch (tk) {
+    case ID:
+        t.type = LL_ID; strncpy(t.lexeme, yytext, 63); break;
+    case INT_CONST:
+        t.type = LL_INT_CONST; strncpy(t.lexeme, yytext, 63); break;
+    case FLOAT_CONST:
+        t.type = LL_FLOAT_CONST; strncpy(t.lexeme, yytext, 63); break;
+    case OP_ADD:
+        t.type = LL_OP_ADD; strncpy(t.lexeme, yytext, 63); break;
+    case OP_MUL:
+        t.type = LL_OP_MUL; strncpy(t.lexeme, yytext, 63); break;
+    case '(':
+        t.type = LL_LPAREN; strcpy(t.lexeme, "("); break;
+    case ')':
+        t.type = LL_RPAREN; strcpy(t.lexeme, ")"); break;
+    case ';':
+        t.type = LL_SEMI; strcpy(t.lexeme, ";"); break;
+    case 0:
+        t.type = LL_END; strcpy(t.lexeme, "EOF"); break;
+    default:
+        t.type = LL_END; strcpy(t.lexeme, "EOF"); break;
+    }
+
+    t.lexeme[63] = '\0';
+    return t;
+}
+
+static void ll_advance(void) {
+    ll_look = ll_next_token();
+}
+
+static const char* ll_tok_name(LLTokenType t) {
+    switch (t) {
+    case LL_ID:          return "id";
+    case LL_INT_CONST:   return "INT_CONST";
+    case LL_FLOAT_CONST: return "FLOAT_CONST";
+    case LL_OP_ADD:      return "OP_ADD(+/-)";
+    case LL_OP_MUL:      return "OP_MUL(*//%)";
+    case LL_LPAREN:      return "'('";
+    case LL_RPAREN:      return "')'";
+    case LL_SEMI:        return "';'";
+    case LL_END:         return "EOF";
+    default:             return "?";
+    }
+}
+
+static void print_ll_header(void) {
+    printf("====================================================================================================================\n");
+    printf("| %-20s | %-40s | %-40s |\n",
+           "Stack / Nonterminal", "Current Input (lookahead)", "Parsing Action");
+    printf("====================================================================================================================\n");
+}
+
+static void print_ll_row(const char* stack, const char* action) {
+    char inputbuf[80];
+    snprintf(inputbuf, sizeof(inputbuf), "%s (\"%s\")",
+             ll_tok_name(ll_look.type), ll_look.lexeme);
+    printf("| %-20s | %-40s | %-40s |\n", stack, inputbuf, action);
+}
+
+static void ll_error(const char* where, const char* expected) {
+    fprintf(stderr,
+            "[LL(1) error] %s : expected %s, got %s ('%s') at line %d\n",
+            where, expected,
+            ll_tok_name(ll_look.type),
+            ll_look.lexeme,
+            line_number);
+    exit(1);
+}
+
+static void parse_E(void) {
+    print_ll_row("E", "E -> T E'");
+    parse_T();
+    parse_Ep();
+}
+
+static void parse_Ep(void) {
+    if (ll_look.type == LL_OP_ADD) {
+        print_ll_row("E'", "E' -> OP_ADD T E'");
+        ll_advance();
+        parse_T();
+        parse_Ep();
+    } else if (ll_look.type == LL_RPAREN ||
+               ll_look.type == LL_SEMI   ||
+               ll_look.type == LL_END) {
+        print_ll_row("E'", "E' -> epsilon");
+    } else {
+        print_ll_row("E'", "ERROR");
+        ll_error("E'", "OP_ADD or FOLLOW(E')");
+    }
+}
+
+static void parse_T(void) {
+    print_ll_row("T", "T -> F T'");
+    parse_F();
+    parse_Tp();
+}
+
+static void parse_Tp(void) {
+    if (ll_look.type == LL_OP_MUL) {
+        print_ll_row("T'", "T' -> OP_MUL F T'");
+        ll_advance();
+        parse_F();
+        parse_Tp();
+    } else if (ll_look.type == LL_OP_ADD   ||
+               ll_look.type == LL_RPAREN   ||
+               ll_look.type == LL_SEMI     ||
+               ll_look.type == LL_END) {
+        print_ll_row("T'", "T' -> epsilon");
+    } else {
+        print_ll_row("T'", "ERROR");
+        ll_error("T'", "OP_MUL or FOLLOW(T')");
+    }
+}
+
+static void parse_F(void) {
+    if (ll_look.type == LL_ID) {
+        print_ll_row("F", "F -> ID");
+        ll_advance();
+    } else if (ll_look.type == LL_INT_CONST) {
+        print_ll_row("F", "F -> INT_CONST");
+        ll_advance();
+    } else if (ll_look.type == LL_FLOAT_CONST) {
+        print_ll_row("F", "F -> FLOAT_CONST");
+        ll_advance();
+    } else if (ll_look.type == LL_LPAREN) {
+        print_ll_row("F", "F -> ( E )");
+        ll_advance();
+        parse_E();
+        if (ll_look.type != LL_RPAREN)
+            ll_error("F", "')'");
+        ll_advance();
+    } else {
+        print_ll_row("F", "ERROR");
+        ll_error("F", "ID/INT_CONST/FLOAT_CONST/'('");
+    }
+}
+
+static void run_ll1_demo(void) {
+    print_first_follow();
+    printf("Enter an arithmetic expression terminated by ';'\n");
+    printf("Example: a + 3 * (b - 2);\n\n");
+
+    ll_advance();
+
+    print_ll_header();
+    parse_E();
+
+    if (ll_look.type != LL_SEMI)
+        ll_error("run_ll1_demo", "';'");
+    print_ll_row("match", "match ';' and ACCEPT");
+    printf("====================================================================================================================\n");
+    printf("\nLL(1) parser: expression accepted.\n");
+}
+
+/* ================= SHIFT-REDUCE TABLE DEMO ================= */
+
+typedef struct {
+    char items[200][32];
+    int top;
+} SRStack;
+
+static void sr_init(SRStack* s) {
+    s->top = -1;
+}
+
+static void sr_push(SRStack* s, const char* x) {
+    if (s->top < 199) {
+        s->top++;
+        strncpy(s->items[s->top], x, 31);
+        s->items[s->top][31] = '\0';
+    }
+}
+
+static void sr_pop(SRStack* s, int k) {
+    s->top -= k;
+    if (s->top < -1) s->top = -1;
+}
+
+static void sr_stack_string(SRStack* s, char* out) {
+    out[0] = '\0';
+    strcat(out, "$");
+    for (int i = 0; i <= s->top; i++) {
+        strcat(out, " ");
+        strcat(out, s->items[i]);
+    }
+}
+
+static void sr_input_string(char tokens[][32], int n, int pos, char* out) {
+    out[0] = '\0';
+    for (int i = pos; i < n; i++) {
+        strcat(out, tokens[i]);
+        if (i != n - 1) strcat(out, " ");
+    }
+    if (strlen(out) > 0) strcat(out, " ");
+    strcat(out, "$");
+}
+
+static void sr_print_header(void) {
+    printf("\n================================================================================\n");
+    printf("| %-28s | %-26s | %-27s |\n", "Stack", "Input", "Action");
+    printf("================================================================================\n");
+}
+
+static void sr_print_row(SRStack* st, char tokens[][32], int n, int pos, const char* action) {
+    char stackbuf[512], inputbuf[512];
+    sr_stack_string(st, stackbuf);
+    sr_input_string(tokens, n, pos, inputbuf);
+    printf("| %-28s | %-26s | %-27s |\n", stackbuf, inputbuf, action);
+}
+
+static const char* sr_next_input(char tokens[][32], int n, int pos) {
+    if (pos < n) return tokens[pos];
+    return "$";
+}
+
+static int sr_try_reduce(SRStack* st, char tokens[][32], int n, int pos) {
+    const char* next = sr_next_input(tokens, n, pos);
+
+    if (st->top >= 0 &&
+        (!strcmp(st->items[st->top], "id") || !strcmp(st->items[st->top], "num"))) {
+
+        char rhs[32];
+        strcpy(rhs, st->items[st->top]);
+
+        sr_pop(st, 1);
+        sr_push(st, "F");
+
+        char action[64];
+        snprintf(action, sizeof(action), "Reduce F -> %s", rhs);
+        sr_print_row(st, tokens, n, pos, action);
+        return 1;
+    }
+
+    if (st->top >= 2 &&
+        !strcmp(st->items[st->top - 2], "(") &&
+        !strcmp(st->items[st->top - 1], "E") &&
+        !strcmp(st->items[st->top], ")")) {
+
+        sr_pop(st, 3);
+        sr_push(st, "F");
+
+        sr_print_row(st, tokens, n, pos, "Reduce F -> ( E )");
+        return 1;
+    }
+
+    if (st->top >= 2 &&
+        !strcmp(st->items[st->top - 2], "T") &&
+        !strcmp(st->items[st->top - 1], "*") &&
+        !strcmp(st->items[st->top], "F")) {
+
+        sr_pop(st, 3);
+        sr_push(st, "T");
+
+        sr_print_row(st, tokens, n, pos, "Reduce T -> T * F");
+        return 1;
+    }
+
+    if (st->top >= 0 && !strcmp(st->items[st->top], "F")) {
+
+        sr_pop(st, 1);
+        sr_push(st, "T");
+
+        sr_print_row(st, tokens, n, pos, "Reduce T -> F");
+        return 1;
+    }
+
+    if (st->top >= 2 &&
+        !strcmp(st->items[st->top - 2], "E") &&
+        !strcmp(st->items[st->top - 1], "+") &&
+        !strcmp(st->items[st->top], "T")) {
+
+        if (strcmp(next, "*") != 0) {
+            sr_pop(st, 3);
+            sr_push(st, "E");
+
+            sr_print_row(st, tokens, n, pos, "Reduce E -> E + T");
+            return 1;
+        }
+    }
+
+    if (st->top >= 0 && !strcmp(st->items[st->top], "T")) {
+
+        if (strcmp(next, "*") != 0) {
+            sr_pop(st, 1);
+            sr_push(st, "E");
+
+            sr_print_row(st, tokens, n, pos, "Reduce E -> T");
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int sr_tokenize_expr(const char* line, char tokens[][32]) {
+    int i = 0, j = 0, n = 0;
+
+    while (line[i]) {
+        if (line[i] == ' ' || line[i] == '\t' || line[i] == '\n') {
+            i++;
+            continue;
+        }
+
+        if ((line[i] >= 'a' && line[i] <= 'z') ||
+            (line[i] >= 'A' && line[i] <= 'Z') ||
+            line[i] == '_') {
+            j = 0;
+            while ((line[i] >= 'a' && line[i] <= 'z') ||
+                   (line[i] >= 'A' && line[i] <= 'Z') ||
+                   (line[i] >= '0' && line[i] <= '9') ||
+                   line[i] == '_') {
+                if (j < 30) tokens[n][j++] = line[i];
+                i++;
+            }
+            tokens[n][j] = '\0';
+            strcpy(tokens[n], "id");
+            n++;
+            continue;
+        }
+
+        if (line[i] >= '0' && line[i] <= '9') {
+            j = 0;
+            while ((line[i] >= '0' && line[i] <= '9') || line[i] == '.') {
+                if (j < 30) tokens[n][j++] = line[i];
+                i++;
+            }
+            tokens[n][j] = '\0';
+            strcpy(tokens[n], "num");
+            n++;
+            continue;
+        }
+
+        if (line[i] == '+' || line[i] == '*' || line[i] == '(' || line[i] == ')') {
+            tokens[n][0] = line[i];
+            tokens[n][1] = '\0';
+            n++;
+            i++;
+            continue;
+        }
+
+        if (line[i] == ';') break;
+
+        i++;
+    }
+
+    return n;
+}
+
+static void run_shift_reduce_table_demo(void) {
+    char line[512];
+    char tokens[200][32];
+    int n, pos = 0;
+    SRStack st;
+
+    printf("\nEnter an expression for shift-reduce table demo:\n");
+    printf("Examples:\n");
+    printf("  a + 3 * b;\n");
+    printf("  2 * (3 + 4);\n\n");
+
+    if (!fgets(line, sizeof(line), stdin)) {
+        printf("No input.\n");
+        return;
+    }
+
+    n = sr_tokenize_expr(line, tokens);
+    sr_init(&st);
+
+    sr_print_header();
+
+    while (pos < n) {
+        sr_push(&st, tokens[pos]);
+
+        char action[64];
+        snprintf(action, sizeof(action), "Shift %s", tokens[pos]);
+        sr_print_row(&st, tokens, n, pos + 1, action);
+        pos++;
+
+        while (sr_try_reduce(&st, tokens, n, pos)) {
+            ;
+        }
+    }
+
+    while (sr_try_reduce(&st, tokens, n, pos)) {
+        ;
+    }
+
+    if (st.top == 0 && !strcmp(st.items[0], "E")) {
+        sr_print_row(&st, tokens, n, pos, "Accept");
+    } else {
+        sr_print_row(&st, tokens, n, pos, "Reject");
+    }
+
+    printf("================================================================================\n");
+}
+
+/* ================= FULL PARSER + SEMANTICS DEMO ================= */
+
+void run_full_parser_demo(void) {
+    reset_semantic_state();
+    error_count = 0;
+    final_root = NULL;
+
+    printf("\nEnter source program. End with EOF.\n");
+    printf("Linux/Mac: Ctrl+D\n");
+    printf("Windows  : Ctrl+Z then Enter\n\n");
+
+    yyparse();
+
+    if (error_count > 0) {
+        print_error_summary();
+    } else {
+        printf("\nNo syntax errors found.\n");
+    }
+
+    if (!final_root) {
+        printf("\nParsing completed, but AST root is NULL.\n");
+        printf("Semantic analysis skipped because no parse tree was built.\n");
+        return;
+    }
+
+    printf("\n================ PARSE TREE ================\n");
+    char prefix[4] = "";
+    print_tree_visual(final_root, prefix, 1);
+
+    printf("\n================ SEMANTIC PASS ================\n");
+    printf("Global scope = 0\n");
+
+    semantic_traverse(final_root);
+
+    print_symbol_table();
+    print_semantic_errors();
+}
+/* ============================= MAIN ========================= */
+
+int main(void) {
+    int choice;
+
+    printf("========================================================\n");
+    printf("      COMPILER PIPELINE DEMONSTRATION MENU\n");
+    printf("========================================================\n");
+    printf("1. LL(1) expression parser demo\n");
+    printf("2. Shift-reduce expression trace demo\n");
+    printf("3. Full parser + AST + Symbol Table + Semantic Analysis\n");
+    printf("Enter choice: ");
+
+    if (scanf("%d", &choice) != 1) {
+        fprintf(stderr, "Invalid choice.\n");
+        return 1;
+    }
+
+    getchar();   /* consume newline */
+
+    if (choice == 1) {
+        run_ll1_demo();
+    } else if (choice == 2) {
+        run_shift_reduce_table_demo();
+    } else if (choice == 3) {
+        run_full_parser_demo();
+    } else {
+        printf("Invalid choice.\n");
+    }
+
+    return 0;
+}
