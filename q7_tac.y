@@ -1,0 +1,383 @@
+%{
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_TOKENS 2000
+#define MAX_ERRORS 100
+
+typedef struct Node {
+    char label[50];
+    char value[50];
+    int line;
+    struct Node* children[10];
+    int child_count;
+} Node;
+
+/* ---- Error tracking ---- */
+typedef struct {
+    int  line;
+    char type[64];
+    char message[256];
+    char token[64];
+} SyntaxError;
+
+/* defined in ll1.c */
+extern SyntaxError error_list[MAX_ERRORS];
+extern int         error_count;
+extern Node*       final_root;
+
+/* ---- Prototypes implemented in ll1.c ---- */
+Node* createNode(const char* label, const char* value);
+void  addChild(Node* parent, Node* child);
+void  print_tree_visual(Node* node, char* prefix, int is_last);
+void  leftmost_derivation(Node* root);
+void  rightmost_derivation(Node* root);
+Node* find_assignment(Node* node);
+void  yyerror(const char *s);
+int   yylex();
+
+extern int   line_number;
+extern char* yytext;
+
+void record_error(const char* msg, const char* tok, int line);
+%}
+
+%define parse.error verbose
+%debug
+
+%union {
+    char*        sval;
+    struct Node* nptr;
+}
+
+%token <sval> ID INT_CONST FLOAT_CONST TYPE OP_REL OP_LOGIC OP_ADD OP_MUL
+%token IF ELSE WHILE PRINT
+%token COMMA
+
+%type <nptr> program stmt_list stmt decl_stmt decl_list decl_item
+             assign_stmt if_stmt while_stmt print_stmt block
+             bool_expr bool_term bool_atom expr term factor
+
+%left OP_LOGIC
+%left OP_REL
+%left OP_ADD
+%left OP_MUL
+%right '!'
+
+%start program
+
+%%
+
+program
+    : stmt_list
+      {
+          final_root = createNode("program", NULL);
+          if ($1) addChild(final_root, $1);
+      }
+    ;
+
+stmt_list
+    : stmt stmt_list
+      {
+          $$ = createNode("stmt_list", NULL);
+          if ($1) addChild($$, $1);
+          if ($2) addChild($$, $2);
+      }
+    | /* empty */
+      {
+          $$ = NULL;
+      }
+    ;
+
+stmt
+    : decl_stmt   { $$ = $1; }
+    | assign_stmt { $$ = $1; }
+    | if_stmt     { $$ = $1; }
+    | while_stmt  { $$ = $1; }
+    | print_stmt  { $$ = $1; }
+    | block       { $$ = $1; }
+    | error ';'
+      {
+          $$ = createNode("error_stmt", "error");
+          $$->line = line_number;
+          yyerrok;
+      }
+    ;
+
+decl_stmt
+    : TYPE decl_list ';'
+      {
+          $$ = createNode("decl_stmt", NULL);
+          addChild($$, createNode("TYPE", $1));
+          addChild($$, $2);
+          addChild($$, createNode("Delimiter", ";"));
+      }
+    ;
+
+decl_list
+    : decl_item
+      {
+          $$ = createNode("decl_list", NULL);
+          addChild($$, $1);
+      }
+    | decl_list COMMA decl_item
+      {
+          $$ = $1;
+          addChild($$, createNode("Comma", ","));
+          addChild($$, $3);
+      }
+    ;
+
+decl_item
+    : ID
+      {
+          $$ = createNode("decl_item", NULL);
+          addChild($$, createNode("ID", $1));
+      }
+    | ID '=' expr
+      {
+          $$ = createNode("decl_item", NULL);
+          addChild($$, createNode("ID", $1));
+          addChild($$, createNode("Assign", "="));
+          addChild($$, $3);
+      }
+    ;
+
+assign_stmt
+    : ID '=' expr ';'
+      {
+          $$ = createNode("assign_stmt", NULL);
+          addChild($$, createNode("ID", $1));
+          addChild($$, createNode("Assign", "="));
+          addChild($$, $3);
+          addChild($$, createNode("Delimiter", ";"));
+      }
+    | ID '=' error ';'
+      {
+          $$ = createNode("assign_stmt", NULL);
+          addChild($$, createNode("ID", $1));
+          addChild($$, createNode("Assign", "="));
+          addChild($$, createNode("error_expr", "invalid_rhs"));
+          yyerrok;
+      }
+    | ID error ';'
+      {
+          $$ = createNode("assign_stmt", NULL);
+          addChild($$, createNode("ID", $1));
+          addChild($$, createNode("error_assign", "invalid_assignment"));
+          yyerrok;
+      }
+    ;
+
+if_stmt
+    : IF '(' bool_expr ')' block
+      {
+          $$ = createNode("if_stmt", NULL);
+          addChild($$, createNode("IF", "if"));
+          addChild($$, $3);
+          addChild($$, $5);
+      }
+    | IF '(' bool_expr ')' block ELSE block
+      {
+          $$ = createNode("if_stmt", NULL);
+          addChild($$, createNode("IF", "if"));
+          addChild($$, $3);
+          addChild($$, $5);
+          addChild($$, createNode("ELSE", "else"));
+          addChild($$, $7);
+      }
+    | IF '(' expr ')' block
+      {
+          $$ = createNode("if_stmt", NULL);
+          addChild($$, createNode("IF", "if"));
+          addChild($$, $3);
+          addChild($$, $5);
+      }
+    | IF '(' expr ')' block ELSE block
+      {
+          $$ = createNode("if_stmt", NULL);
+          addChild($$, createNode("IF", "if"));
+          addChild($$, $3);
+          addChild($$, $5);
+          addChild($$, createNode("ELSE", "else"));
+          addChild($$, $7);
+      }
+    | IF '(' error ')' block
+      {
+          $$ = createNode("if_stmt", NULL);
+          addChild($$, createNode("IF", "if"));
+          addChild($$, createNode("error_cond", "invalid_condition"));
+          addChild($$, $5);
+          yyerrok;
+      }
+    | IF '(' error ')' block ELSE block
+      {
+          $$ = createNode("if_stmt", NULL);
+          addChild($$, createNode("IF", "if"));
+          addChild($$, createNode("error_cond", "invalid_condition"));
+          addChild($$, $5);
+          addChild($$, createNode("ELSE", "else"));
+          addChild($$, $7);
+          yyerrok;
+      }
+    ;
+
+while_stmt
+    : WHILE '(' bool_expr ')' block
+      {
+          $$ = createNode("while_stmt", NULL);
+          addChild($$, createNode("WHILE", "while"));
+          addChild($$, $3);
+          addChild($$, $5);
+      }
+    | WHILE '(' expr ')' block
+      {
+          $$ = createNode("while_stmt", NULL);
+          addChild($$, createNode("WHILE", "while"));
+          addChild($$, $3);
+          addChild($$, $5);
+      }
+    | WHILE '(' error ')' block
+      {
+          $$ = createNode("while_stmt", NULL);
+          addChild($$, createNode("WHILE", "while"));
+          addChild($$, createNode("error_cond", "invalid_condition"));
+          addChild($$, $5);
+          yyerrok;
+      }
+    ;
+
+print_stmt
+    : PRINT '(' expr ')' ';'
+      {
+          $$ = createNode("print_stmt", NULL);
+          addChild($$, createNode("PRINT", "print"));
+          addChild($$, $3);
+          addChild($$, createNode("Delimiter", ";"));
+      }
+    | PRINT '(' error ')' ';'
+      {
+          $$ = createNode("print_stmt", NULL);
+          addChild($$, createNode("PRINT", "print"));
+          addChild($$, createNode("error_expr", "invalid_print_expr"));
+          yyerrok;
+      }
+    | PRINT '(' expr ')' error
+      {
+          $$ = createNode("print_stmt", NULL);
+          addChild($$, createNode("PRINT", "print"));
+          addChild($$, $3);
+          addChild($$, createNode("error_semicolon", "missing_semicolon"));
+          yyerrok;
+      }
+    ;
+
+block
+    : '{' stmt_list '}'
+      {
+          $$ = createNode("block", NULL);
+          if ($2) addChild($$, $2);
+      }
+    ;
+
+bool_expr
+    : bool_term
+      {
+          $$ = createNode("bool_expr", NULL);
+          addChild($$, $1);
+      }
+    | bool_expr OP_LOGIC bool_term
+      {
+          $$ = createNode("bool_expr", NULL);
+          addChild($$, $1);
+          addChild($$, createNode("LOGIC", $2));
+          addChild($$, $3);
+      }
+    ;
+
+bool_term
+    : bool_atom
+      {
+          $$ = createNode("bool_term", NULL);
+          addChild($$, $1);
+      }
+    | '!' bool_term
+      {
+          $$ = createNode("bool_term", NULL);
+          addChild($$, createNode("NOT", "!"));
+          addChild($$, $2);
+      }
+    ;
+
+bool_atom
+    : expr OP_REL expr
+      {
+          $$ = createNode("bool_atom", NULL);
+          addChild($$, $1);
+          addChild($$, createNode("REL", $2));
+          addChild($$, $3);
+      }
+    | '(' bool_expr ')'
+      {
+          $$ = createNode("bool_atom", NULL);
+          addChild($$, $2);
+      }
+    ;
+
+expr
+    : term
+      {
+          $$ = createNode("expr", NULL);
+          addChild($$, $1);
+      }
+    | expr OP_ADD term
+      {
+          $$ = createNode("expr", NULL);
+          addChild($$, $1);
+          addChild($$, createNode("Operator", $2));
+          addChild($$, $3);
+      }
+    ;
+
+term
+    : factor
+      {
+          $$ = createNode("term", NULL);
+          addChild($$, $1);
+      }
+    | term OP_MUL factor
+      {
+          $$ = createNode("term", NULL);
+          addChild($$, $1);
+          addChild($$, createNode("Operator", $2));
+          addChild($$, $3);
+      }
+    ;
+
+factor
+    : ID
+      {
+          $$ = createNode("factor", NULL);
+          addChild($$, createNode("ID", $1));
+      }
+    | INT_CONST
+      {
+          $$ = createNode("factor", NULL);
+          addChild($$, createNode("INT_CONST", $1));
+      }
+    | FLOAT_CONST
+      {
+          $$ = createNode("factor", NULL);
+          addChild($$, createNode("FLOAT_CONST", $1));
+      }
+    | '(' expr ')'
+      {
+          $$ = createNode("factor", NULL);
+          addChild($$, createNode("Delimiter", "("));
+          addChild($$, $2);
+          addChild($$, createNode("Delimiter", ")"));
+      }
+    ;
+
+%%
