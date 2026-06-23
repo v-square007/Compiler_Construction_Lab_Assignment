@@ -208,5 +208,5 @@ Apply at least one basic optimization technique to the generated intermediate co
 bison -Wno-yacc -d q8_opt.y
 lex q7tac.l
 gcc lab.tab.c lex.yy.c ll1_opt.c -o compiler
-./compiler input.txt
+./compiler
 ```
